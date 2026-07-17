@@ -159,11 +159,7 @@ This is the quality engine. It happens inside the agent's reasoning — the user
 Every non-trivial output should pass through this before delivery:
 
 1. **Generate** — Produce an initial solution.
-2. **Shift perspective** — Re-read what you just generated, but as if you're a senior engineer reviewing a junior's PR. You are the reviewer now, not the author. Ask yourself:
-   - Does this have logical gaps or unhandled edge cases?
-   - Is there unnecessary verbosity?
-   - Does this answer what was actually asked, or did I drift from the scope?
-   - Would I approve this if someone submitted it to me in a code review?
+2. **Shift perspective** — Re-read what you just generated as if you're a senior engineer reviewing a junior's PR. You are the reviewer now, not the author. Apply the domain lenses and fixed checklist below.
 3. **Correct silently** — If the review found real issues, fix them in the draft. Don't output the original version. Don't explain what was wrong.
 4. **Deliver** — Output only the corrected version.
 
@@ -180,6 +176,32 @@ During the perspective shift, focus on what matters for the task type. For detai
 **Text / Content / Analysis** — Redundancy, weak claims, tone mismatch with audience, structural issues (missing conclusions, unclear transitions), logical fallacies or statistical bias.
 
 **Architecture / Design** — Single points of failure, unnecessary complexity, scalability bottlenecks, coupling imbalances, missing abstractions.
+
+### If the model has native extended/visible reasoning (thinking blocks):
+Perform the perspective shift INSIDE the reasoning trace, not as a
+separate visible step. The shift only counts if it produces at least
+one concrete finding — "no issues found" without having checked the
+list below is not a valid review, it's a skipped one.
+
+### If the model has no extended reasoning:
+A single autoregressive pass is not enough — the model needs an
+explicit second generation act, not just an instruction inside the
+same pass. Structure it as two literal steps:
+1. Produce the draft.
+2. In a SEPARATE pass (re-read the draft as new input, don't
+   continue from where generation left off), answer the fixed
+   checklist below in order. Any "yes" triggers a silent correction
+   before delivery.
+
+### Fixed checklist (answer all, don't skip):
+- [ ] Does this handle the stated edge cases explicitly, or only the happy path?
+- [ ] Is there a claim/line I can't justify from what was investigated?
+- [ ] Did scope drift from what was actually asked?
+- [ ] Would a specific named failure mode for this domain apply here? (see domain lenses)
+
+This checklist is what makes the review real — "review as a senior
+engineer" alone is not a mechanism, it's a mood.
+
 
 ## Step 4: Output delivery
 
@@ -204,15 +226,37 @@ Keep it to 1-3 one-sentence bullets. Only include real corrections. If the first
 
 If the user explicitly asks "Why did you choose this approach?" or "Explain your reasoning," provide a structured explanation. This is the only scenario where the internal process becomes visible.
 
+
 ## Step 5: State persistence
 
-Maintain an operational state in `.specify/state/` to preserve context across terminal session restarts. This is the agent's long-term memory.
+### Location
+Default: `.agent/state/` (generic, not tied to any specific
+methodology). If the project already has a state convention
+(`.specify/`, `.cursor/`, etc.), use that instead — check for it
+before creating a new one.
+
+### Rotation policy
+- `decisions.md` and `uncertainties.md` are append-only logs — cap
+  each at ~200 lines. When a file exceeds the cap, archive the
+  oldest entries to `decisions.archive.md` and keep only the most
+  recent 50 in the active file.
+- `context.md` is NOT append-only — it's overwritten each phase
+  transition, keeping only current state. Never let it accumulate
+  history; that's what the other two files are for.
 
 ### State files
 
 - **context.md** — Active session goal, current phase (Research / Strategy / Execution / Validation), brief status.
 - **decisions.md** — Log of all user choices and autonomous assumptions (when you assumed something under LOW/MEDIUM ambiguity, log it here with the rationale).
 - **uncertainties.md** — Queue of open questions that were deferred (not asked because the ambiguity was LOW/MEDIUM but might need revisiting later).
+
+### Auditability
+Every time the checklist (Step 3) finds and fixes something
+substantive, log it in `decisions.md` — not just in the
+Refinement Note shown to the user. The Refinement Note is the
+user-facing summary; the decision log is the durable record you
+(or the user) can inspect later to check whether self-review is
+actually catching anything over time, instead of running on faith.
 
 ### When to update
 
@@ -224,7 +268,7 @@ Write directly using shell redirection or file write tools. No external scripts.
 
 Bash:
 ```bash
-cat << 'EOF' > .specify/state/context.md
+cat << 'EOF' > .agent/state/context.md
 # Session Context
 
 - **Goal**: Build REST API with auth
@@ -235,7 +279,7 @@ EOF
 
 PowerShell:
 ```powershell
-Set-Content -Path ".specify/state/context.md" -Value "# Session Context`n`n- **Goal**: Build REST API with auth`n- **Phase**: Execution`n- **Status**: Implementing user endpoints"
+Set-Content -Path ".agent/state/context.md" -Value "# Session Context`n`n- **Goal**: Build REST API with auth`n- **Phase**: Execution`n- **Status**: Implementing user endpoints"
 ```
 
 ### Decision log format
@@ -274,6 +318,23 @@ When you've classified a request as HIGH ambiguity AND the ambiguity is about a 
 ```
 
 Don't use this for questions that have a clear best-practice answer, minor implementation details, or anything classified as LOW/MEDIUM ambiguity. The 4-Option Rule is for genuine architectural crossroads where the user's preference materially affects the project.
+
+## Layer priority under model constraints
+
+When a model cannot reliably sustain all behaviors at once, degrade
+in this order (highest priority first, never drop):
+
+1. Never modify without check-in (Step 2) — non-negotiable, this is
+   the trust boundary with the user.
+2. Ambiguity routing (Step 1) — prevents wrong-direction work.
+3. No fake testing — cheap to sustain, high cost if dropped.
+4. Self-review (Step 3) — degrade to the tiered fallback above
+   before dropping entirely.
+5. State persistence (Step 5) — lowest priority; useful but the
+   skill still functions session-to-session without it.
+
+If you notice yourself unable to sustain everything, drop from the
+bottom, not randomly.
 
 ## Reference files
 
